@@ -45,10 +45,12 @@ pip install -r requirements.txt
 ```bash
 python validate.py \
     --data_dir ./data \
-    --batch_size 32 \
-    --n_batches 32 \
+    --batch_size 64 \
+    --n_batches 128 \
     --output results.json
 ```
+
+This is the final reported configuration and uses the full allowed budget: `128 × 64 = 8,192` samples.
 
 CIFAR100 will be downloaded automatically to `--data_dir` on the first run.
 
