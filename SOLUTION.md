@@ -96,9 +96,10 @@ proj_grad = (f_plus - f_minus) / (2 * eps)         # scalar
 grad_estimate = proj_grad * z                       # back-projected per-param tensor
 ```
 
-The cost is **2 forward passes per step regardless of model size**, and the
-estimator is unbiased for the true gradient: `E[proj_grad · z] = ∇L` because
-`E[z zᵀ] = I` for IID Gaussian `z`.
+The cost is **2 forward passes per step regardless of model size**. For finite
+`eps`, the estimator approximates the gradient of a Gaussian-smoothed objective;
+its finite-difference bias decreases as `eps` becomes smaller, while
+`E[z zᵀ] = I` for IID Gaussian `z` controls the directional projection.
 
 ### 2. Why tune only the head (`fc.weight`, `fc.bias`)
 
@@ -131,7 +132,7 @@ finite-difference loss signal becomes weaker relative to the noise.
 
 ### 4. Why momentum SGD as the update rule
 
-Each SPSA pseudo-gradient is unbiased but extremely noisy:
+Each SPSA pseudo-gradient is a noisy finite-difference estimate:
 `Var(g_i) ≈ ||∇L||²`, dominated by the magnitude of the *full* gradient
 rather than the per-element gradient. Per-element SNR is `|∇L_i| / ||∇L||`,
 which for ResNet18 head fine-tuning is roughly `0.05 – 0.1`.
@@ -179,8 +180,8 @@ the variance of `f_plus − f_minus`), so heavy augmentation hurts.
 
 We kept three light augmentations:
 
-* `RandomHorizontalFlip()` — free generalization, no noise added (mirroring
-  is a label-preserving deterministic operation per sample).
+* `RandomHorizontalFlip()` — light label-preserving regularization. It is
+  stochastic, so its contribution was kept deliberately small.
 * `RandomCrop(224, padding=16)` — small translational variation. Padding=16
   on a 224×224 image is a ~7% shift, mild.
 * `ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1)` — small color

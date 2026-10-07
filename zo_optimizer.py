@@ -16,8 +16,9 @@ Per query:
     proj_grad = (f_plus - f_minus) / (2 * eps)
     grad_estimate[name] = proj_grad * z[name]
 
-The estimator is unbiased for the true gradient under E[z z^T] = I (Spall,
-1992), but its per-element variance is O(||grad||^2). We mitigate this with
+For finite ``eps``, the estimator approximates the gradient of a Gaussian-
+smoothed objective; its bias decreases with ``eps`` while its per-element
+variance remains O(||grad||^2). We mitigate this variance with
 **multi-query SPSA**: each ``.step()`` averages ``num_queries`` independent
 SPSA estimates on the *same* batch, cutting per-step variance by ``1/q``
 in exchange for ``2 * q`` forward passes per step. The compute budget is
@@ -65,6 +66,11 @@ class ZeroOrderOptimizer:
         self.lr = float(lr)
         self.eps = float(eps)
 
+        if self.lr <= 0.0:
+            raise ValueError(f"lr must be positive, got {lr}")
+        if self.eps <= 0.0:
+            raise ValueError(f"eps must be positive, got {eps}")
+
         if perturbation_mode not in ("gaussian", "uniform"):
             raise ValueError(
                 f"perturbation_mode must be 'gaussian' or 'uniform', "
@@ -74,6 +80,13 @@ class ZeroOrderOptimizer:
         self.momentum = float(momentum)
         self.num_queries = int(num_queries)
         self.weight_decay = float(weight_decay)
+
+        if not 0.0 <= self.momentum < 1.0:
+            raise ValueError(f"momentum must be in [0, 1), got {momentum}")
+        if self.num_queries < 1:
+            raise ValueError(f"num_queries must be at least 1, got {num_queries}")
+        if self.weight_decay < 0.0:
+            raise ValueError(f"weight_decay must be non-negative, got {weight_decay}")
 
         self.layer_names: List[str] = ["fc.weight", "fc.bias"]
 
@@ -111,19 +124,24 @@ class ZeroOrderOptimizer:
         """One central-difference SPSA query. 2 forward passes."""
         directions = {n: self._sample_direction(p) for n, p in params.items()}
 
-        with torch.no_grad():
-            for n, p in params.items():
-                p.data.add_(directions[n], alpha=self.eps)
-        f_plus = loss_fn()
+        offset = 0.0
+        try:
+            with torch.no_grad():
+                for n, p in params.items():
+                    p.add_(directions[n], alpha=self.eps)
+            offset = self.eps
+            f_plus = loss_fn()
 
-        with torch.no_grad():
-            for n, p in params.items():
-                p.data.add_(directions[n], alpha=-2.0 * self.eps)
-        f_minus = loss_fn()
-
-        with torch.no_grad():
-            for n, p in params.items():
-                p.data.add_(directions[n], alpha=self.eps)
+            with torch.no_grad():
+                for n, p in params.items():
+                    p.add_(directions[n], alpha=-2.0 * self.eps)
+            offset = -self.eps
+            f_minus = loss_fn()
+        finally:
+            if offset:
+                with torch.no_grad():
+                    for n, p in params.items():
+                        p.add_(directions[n], alpha=-offset)
 
         proj_grad = (f_plus - f_minus) / (2.0 * self.eps)
         grads = {n: directions[n] * proj_grad for n in params}
@@ -166,13 +184,13 @@ class ZeroOrderOptimizer:
             for n, p in params.items():
                 g = grads[n]
                 if self.weight_decay > 0.0:
-                    g = g.add(p.data, alpha=self.weight_decay)
+                    g = g.add(p, alpha=self.weight_decay)
 
                 if n not in self._velocity:
                     self._velocity[n] = torch.zeros_like(p)
                 v = self._velocity[n]
                 v.mul_(self.momentum).add_(g, alpha=1.0 - self.momentum)
-                p.data.add_(v, alpha=-self.lr)
+                p.add_(v, alpha=-self.lr)
 
     # ------------------------------------------------------------------
     # Public API

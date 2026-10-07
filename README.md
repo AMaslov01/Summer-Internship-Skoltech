@@ -1,170 +1,92 @@
-# Compute-Constrained Zero-Order Fine-Tuning of ResNet18 on CIFAR-100
+# Compute-Constrained Zero-Order Fine-Tuning
 
-This project explores black-box fine-tuning when gradients are unavailable and the training budget is extremely limited. I implemented a Simultaneous Perturbation Stochastic Approximation (SPSA) optimizer for the ResNet18 classification head and evaluated it under a strict budget of **8,192 training samples**.
+An experiment in black-box fine-tuning of a pretrained ResNet18 on CIFAR-100
+without gradients. The optimizer can observe scalar loss values only, and the
+training budget is limited to **8,192 samples**.
 
-The final configuration uses two forward passes per optimization step regardless of parameter count, reducing the cost of the original per-parameter estimator by roughly three orders of magnitude. The repository includes deterministic evaluation, ablations, failed approaches, and exact reproduction instructions.
+I replaced the original per-parameter finite-difference estimator with SPSA:
+all selected parameters are perturbed along one random direction, so the final
+configuration needs two forward evaluations per step regardless of parameter
+count. Only the 51,300-parameter classification head is optimized.
+
+## Recorded result
 
 | Checkpoint | Top-1 accuracy |
 |---|---:|
-| Initialized classification head | 0.89% |
+| ImageNet head baseline | 0.37% |
+| New head before fine-tuning | 0.89% |
 | SPSA fine-tuned head | **1.50%** |
 
-The absolute accuracy remains low, which is an important limitation rather than a result to hide. The useful outcome is the experimentally validated compute reduction, the analysis of estimator noise under a hard budget, and a reproducible record of what failed.
+Final budget: `128 steps × 64 samples = 8,192 samples`.
 
-See [`SOLUTION.md`](SOLUTION.md) for the full method, hyperparameter studies, failure analysis, and reproduction steps.
+The original generated `results.json` is not present in this repository. The
+values above are recorded in [`SOLUTION.md`](SOLUTION.md); running the command
+below regenerates a result file with the current code and environment.
 
-## Original assignment
+## Method
 
-## Assignment Overview
+- two-point SPSA with Gaussian perturbations;
+- heavy-ball momentum for variance reduction;
+- optimization restricted to `fc.weight` and `fc.bias`;
+- small Gaussian initialization for the new head;
+- light crop, color, and horizontal-flip augmentation;
+- fixed random seeds and deterministic PyTorch settings where supported.
 
-In this assignment you will fine-tune a pretrained ResNet18 on the CIFAR100 dataset using **zero-order (gradient-free) optimization** — i.e. without computing any gradients explicitly. Your optimizer may only query the model as a black box, receiving scalar loss values in return.
+The full experiment log, ablations, failed approaches, and limitations are in
+[`SOLUTION.md`](SOLUTION.md).
 
-The total compute budget is fixed in terms of **samples**: you get exactly `n_batches` optimizer steps, each operating on a mini-batch of size `batch_size`. The total number of samples used must not exceed **8192** (`n_batches × batch_size ≤ 8192`). Choose your split wisely — more steps means finer updates, larger batches means less noisy loss estimates. 
+## Repository layout
 
-**The goal is to achieve the best possible validation accuracy within the compute budget.**
+```text
+zo_optimizer.py   SPSA gradient estimate and momentum update
+head_init.py      Classification-head initialization
+augmentation.py   Training and evaluation transforms
+train_data.py     CIFAR-100 training loader
+model.py          Fixed ResNet18 construction
+validate.py       Fixed experiment runner
+SOLUTION.md       Experiment record and failure analysis
+```
 
-You are free to edit the following files:
+## Reproduce
 
-- `zo_optimizer.py`
-- `head_init.py`
-- `augmentation.py`
-- `train_data.py`
-
----
-
-## Quick Start
-
-### 1. Install dependencies
+Python 3.13 was used for the final experiment.
 
 ```bash
-pip install -r requirements.txt
+python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python validate.py \
+  --data_dir ./data \
+  --batch_size 64 \
+  --n_batches 128 \
+  --output results.json
 ```
 
-### 2. Run evaluation
-
-```bash
-python validate.py \
-    --data_dir ./data \
-    --batch_size 64 \
-    --n_batches 128 \
-    --output results.json
-```
-
-This is the final reported configuration and uses the full allowed budget: `128 × 64 = 8,192` samples.
-
-CIFAR100 will be downloaded automatically to `--data_dir` on the first run.
-
-> **Compute budget constraint:** `n_batches × batch_size` must not exceed **8192**. `validate.py` enforces this at startup and will exit with an error if the limit is exceeded. Valid combinations include `32 × 32`, `64 × 16`, or `128 × 8`. Consider the trade-off: more batches allow more optimizer steps, larger batches reduce gradient estimate noise.
-
----
-
-## Files You Can Edit
-
-| File | What to implement |
-|------|-------------------|
-| `zo_optimizer.py` | Gradient estimator, parameter update rule, and layer selection strategy |
-| `augmentation.py` | Training-time data augmentation pipeline |
-| `head_init.py` | Weight initialization for the new classification head |
-| `train_data.py` | Train dataset and dataloader initialization |
-
-**Do not edit** `validate.py` or `model.py`. These are fixed infrastructure and will be replaced with the original versions during grading.
-
----
-
-## What to Implement
-
-### `zo_optimizer.py` — Zero-order optimizer (main task)
-
-This is the core of the assignment. Your optimizer must:
-
-- Estimate pseudo-gradients using only scalar loss evaluations — no `loss.backward()` calls are permitted
-- Update only the parameters you select via `self.layer_names`
-- Respect the compute budget — every call to `loss_fn()` inside `.step()` costs one forward pass
-
-The skeleton provides a **2-point central-difference estimator** as a starting point:
-
-```
-grad ≈ (f(x + ε·u) - f(x - ε·u)) / (2ε)  ×  u
-```
-
-where `u` is a random unit vector. This requires 2 forward passes **per parameter**, which becomes prohibitively expensive for large layers. Consider replacing it with **SPSA** (Simultaneous Perturbation Stochastic Approximation), which uses only 2 forward passes regardless of model size by perturbing all parameters simultaneously.
-
-You also control **which layers to tune** via `self.layer_names`. This list can be changed between steps, enabling curriculum strategies — for example, optimizing only the head early on, then gradually unfreezing deeper layers as the budget allows.
-
-### `augmentation.py` — Data augmentation
-
-Extend the training transform pipeline to improve generalization. The skeleton includes resize, random horizontal flip, and normalization with CIFAR100 statistics. Useful additions to consider:
-
-- `T.RandomCrop(224, padding=28)` — translation invariance
-- `T.ColorJitter(...)` — colour robustness
-- `T.RandomErasing(p=0.2)` — occlusion robustness
-
-Do **not** modify the validation transforms.
-
-### `head_init.py` — Head initialization
-
-Implement `init_last_layer(layer)` to initialize the new 100-class linear head. The skeleton uses Kaiming uniform initialization. Alternatives worth exploring:
-
-- `nn.init.xavier_uniform_` — variance-preserving across layers
-- `nn.init.orthogonal_` — encourages diverse feature directions
-- Small-scale initialization (e.g. multiply weights by 0.01) — conservative starting point that avoids large initial loss values
-
-### `train_data.py` — Train data
-
-You may control which training samples are used — you can select a fixed subset, sample randomly from CIFAR100, or even generate synthetic data.
-
----
-
-## Evaluation Checkpoints
-
-`validate.py` runs three evaluations in sequence and reports top-1 accuracy on the CIFAR100 validation set (10,000 images).
-
-| # | Checkpoint | What it measures |
-|---|-----------|-----------------|
-| 1 | **Baseline (ImageNet head)** | Raw transfer performance of ResNet18 with the original 1000-class ImageNet head applied to CIFAR100. Accuracy will be near zero since the output classes do not match — this is a sanity check only. |
-| 2 | **Initialized head (no fine-tuning)** | Performance after replacing the head with your 100-class layer, initialized via `init_last_layer()`, with no optimization. Reflects the quality of your initialization strategy. |
-| 3 | **Fine-tuned (ZO)** | Accuracy after `n_batches` zero-order optimization steps. This is your primary result and the number used for grading. |
-
-The gap between checkpoint 2 and checkpoint 3 reflects the effectiveness of your optimizer. The level of checkpoint 2 reflects the quality of your head initialization.
-
----
-
-## Output JSON
-
-Results are saved to the path specified by `--output`. Example:
+CIFAR-100 is downloaded on the first run. The generated JSON uses these keys:
 
 ```json
 {
-  "val_accuracy_imagenet_head": 0.0412,
-  "val_accuracy_init_head": 0.0091,
-  "val_accuracy_finetuned": 0.1735,
-  "n_batches": 32,
-  "batch_size": 32,
+  "val_accuracy_top1_imagenet_head": 0.0037,
+  "val_accuracy_top1_init_head": 0.0089,
+  "val_accuracy_top1_finetuned": 0.015,
+  "n_batches": 128,
+  "batch_size": 64,
   "layers_tuned": ["fc.weight", "fc.bias"],
-  "total_samples": 1024
+  "total_samples": 10000
 }
 ```
 
-All accuracy values are in `[0, 1]` — multiply by 100 for percentages. Top-1 accuracy on the fine-tuned checkpoint is the sole metric used for grading.
+## Tests
 
-**`val_accuracy_top1_finetuned` is our main metric for this assignment.**
+The optimizer tests use a tiny local model and do not download CIFAR-100:
 
-# What is expected from the applicant of SMILES-2026 ?
+```bash
+python -m unittest discover -s tests -v
+```
 
-**Q1:** What must the applicant submit in the application form ?<br>
-**A1:** Submit: 
-1. A link to your Github repository
+## Limitations
 
-**Q2:** What the applicants must include in the Github repository ?<br>
-**A2:** Your repository must contain: 
-1. `results.json` - produced by the official `validate.py`
-2. Report file in Markdown format `SOLUTION.md`. 
-
-**Q3:** Report requirements (`SOLUTION.md`)<br>
-**A3:** Your report must include:
-- Reproducibility instructions: exact commands to run your solution and acquire the same `results.json`, required environment (if any), any important implementation details needed to reproduce your result.
-- Final solution description: What components you modified ? What your final approach is ? Why you made these choices ? What contributed most to improving the metric ?
-- Experiments and failed attempts: What ideas you tried but did not include in the final solution ? Why they did not work or were discarded ?
-
-**Q4:** Reproducibility<br>
-**A4:** The repository must be self-contained and runnable with the provided `validate.py` evaluation script. Your solution must not require changes to the fixed files. Running `validate.py` must generate your final `results.json`. The reported metric (`val_accuracy_top1_finetuned`) in `results.json` must be reproducible using the official evaluation script. A deviation of up to ±0.5% (absolute accuracy) is allowed.
+- The final 1.50% accuracy is low in absolute terms; the main result is the
+  compute reduction and the measured behavior of SPSA under a hard budget.
+- Hyperparameters were selected against the challenge evaluation split, so the
+  reported score is a challenge result rather than an untouched test estimate.
+- Reproducibility across MPS, CUDA, and CPU can still vary despite fixed seeds.

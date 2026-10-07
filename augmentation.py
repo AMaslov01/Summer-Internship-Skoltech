@@ -8,7 +8,7 @@ RandomErasing with high p, large ColorJitter) was tried and consistently
 hurt the fine-tuned accuracy in the 8k-sample budget regime.
 
 The augmentations kept:
-  * RandomHorizontalFlip               — free generalisation, no extra noise
+  * RandomHorizontalFlip               — light label-preserving regularisation
   * RandomCrop with small padding      — translation invariance via shifts of
                                          the upscaled 224x224 image
   * Mild ColorJitter                   — robustness to colour drift; small
