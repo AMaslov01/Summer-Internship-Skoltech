@@ -1,4 +1,19 @@
-# Zero-Order Fine-Tuning of ResNet18 on CIFAR100
+# Compute-Constrained Zero-Order Fine-Tuning of ResNet18 on CIFAR-100
+
+This project explores black-box fine-tuning when gradients are unavailable and the training budget is extremely limited. I implemented a Simultaneous Perturbation Stochastic Approximation (SPSA) optimizer for the ResNet18 classification head and evaluated it under a strict budget of **8,192 training samples**.
+
+The final configuration uses two forward passes per optimization step regardless of parameter count, reducing the cost of the original per-parameter estimator by roughly three orders of magnitude. The repository includes deterministic evaluation, ablations, failed approaches, and exact reproduction instructions.
+
+| Checkpoint | Top-1 accuracy |
+|---|---:|
+| Initialized classification head | 0.89% |
+| SPSA fine-tuned head | **1.50%** |
+
+The absolute accuracy remains low, which is an important limitation rather than a result to hide. The useful outcome is the experimentally validated compute reduction, the analysis of estimator noise under a hard budget, and a reproducible record of what failed.
+
+See [`SOLUTION.md`](SOLUTION.md) for the full method, hyperparameter studies, failure analysis, and reproduction steps.
+
+## Original assignment
 
 ## Assignment Overview
 
