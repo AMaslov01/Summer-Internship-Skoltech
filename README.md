@@ -75,6 +75,10 @@ CIFAR-100 is downloaded on the first run. The generated JSON uses these keys:
 }
 ```
 
+Here, `total_samples` is the size of the validation split. The optimization
+budget is reported separately by `n_batches × batch_size` and remains 8,192
+training samples in the configuration above.
+
 ## Tests
 
 The optimizer tests use a tiny local model and do not download CIFAR-100:
